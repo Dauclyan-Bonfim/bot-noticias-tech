@@ -29,83 +29,69 @@ RSS_FEEDS = [
 ]
 
 # ==============================
-# HYPE SETTINGS
+# HYPE KEYWORDS
 # ==============================
-# Quanto maior o peso, mais "hype" a palavra gera
 HYPE_KEYWORDS = {
-    # Games / lançamentos
     "gta": 10,
     "rockstar": 8,
-    "elder scrolls": 7,
-    "witcher": 7,
-    "fromsoftware": 7,
     "elden ring": 7,
+    "witcher": 7,
     "cyberpunk": 6,
-    "red dead": 6,
-    "trailer": 5,
-    "release": 5,
-    "launch": 5,
-    "beta": 4,
-    "leak": 6,
-    "rumor": 4,
-
-    # Plataformas / stores
-    "steam": 5,
     "steam sale": 9,
-    "epic": 4,
-    "game pass": 6,
-    "playstation": 5,
+    "steam": 5,
+    "playstation": 6,
     "ps5": 6,
     "xbox": 5,
     "nintendo": 5,
-    "switch": 5,
-
-    # Hardware
+    "rtx": 7,
     "nvidia": 7,
     "amd": 6,
     "intel": 5,
-    "rtx": 7,
-    "radeon": 5,
-    "ryzen": 5,
-    "driver": 4,
-
-    # IA / Big Tech
     "openai": 8,
     "chatgpt": 7,
     "gpt": 6,
-    "anthropic": 6,
-    "deepmind": 6,
-    "gemini": 6,
-    "ai": 3,  # genérico (baixo)
-    "artificial intelligence": 5,
-
-    # Segurança (quando é grande)
-    "zero-day": 8,
-    "0-day": 8,
-    "cve-": 7,
+    "ai": 3,
     "ransomware": 7,
-    "breach": 6,
+    "zero-day": 8,
+    "cve-": 7,
 }
 
-# Threshold para disparar alerta separado
 HYPE_ALERT_THRESHOLD = 10
 
 # ==============================
-# TELEGRAM
+# TELEGRAM (COM DIVISÃO)
 # ==============================
 def send_message(text: str) -> None:
     if not TELEGRAM_TOKEN or not CHAT_ID:
-        raise ValueError("Secrets não configurados: TELEGRAM_TOKEN / TELEGRAM_CHAT_ID.")
+        raise ValueError("Secrets não configurados.")
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True
-    }
-    r = requests.post(url, json=payload, timeout=30)
-    r.raise_for_status()
+    MAX_LEN = 3500
+
+    lines = text.split("\n")
+    chunks = []
+    current = ""
+
+    for line in lines:
+        if len(current) + len(line) + 1 > MAX_LEN:
+            chunks.append(current.strip())
+            current = line + "\n"
+        else:
+            current += line + "\n"
+
+    if current.strip():
+        chunks.append(current.strip())
+
+    for part in chunks:
+        payload = {
+            "chat_id": CHAT_ID,
+            "text": part,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True
+        }
+        r = requests.post(url, json=payload, timeout=30)
+        r.raise_for_status()
+        time.sleep(1)
 
 # ==============================
 # TRADUÇÃO
@@ -123,24 +109,19 @@ def categorize(title: str, source: str) -> str:
     source_lower = source.lower()
     title_lower = title.lower()
 
-    # Se for site de games
     if any(site in source_lower for site in ["ign", "kotaku", "gamespot", "pc gamer"]):
         return "🎮 Games"
 
-    # IA
-    if any(word in title_lower for word in ["openai", "chatgpt", "gpt", "anthropic", "deepmind", "gemini", "ai", "artificial intelligence"]):
+    if any(word in title_lower for word in ["openai", "chatgpt", "gpt", "ai"]):
         return "🤖 IA"
 
-    # Hardware
-    if any(word in title_lower for word in ["rtx", "gpu", "cpu", "nvidia", "amd", "intel", "ryzen", "radeon", "driver"]):
+    if any(word in title_lower for word in ["rtx", "gpu", "cpu", "nvidia", "amd", "intel"]):
         return "🖥 Hardware"
 
-    # Segurança
-    if any(word in title_lower for word in ["hack", "breach", "malware", "ransomware", "security", "zero-day", "0-day", "cve-"]):
+    if any(word in title_lower for word in ["hack", "breach", "malware", "ransomware", "zero-day", "cve-"]):
         return "🔐 Segurança"
 
-    # Mobile
-    if any(word in title_lower for word in ["iphone", "android", "samsung", "mobile", "app"]):
+    if any(word in title_lower for word in ["iphone", "android", "samsung"]):
         return "📱 Mobile"
 
     return "🧠 Tech Geral"
@@ -151,66 +132,19 @@ def categorize(title: str, source: str) -> str:
 def hype_score(title: str) -> int:
     t = title.lower()
     score = 0
-    for kw, w in HYPE_KEYWORDS.items():
+    for kw, weight in HYPE_KEYWORDS.items():
         if kw in t:
-            score += w
+            score += weight
     return score
 
 def entry_timestamp(entry) -> int:
-    # tenta pegar published_parsed / updated_parsed
-    for attr in ("published_parsed", "updated_parsed"):
-        tp = getattr(entry, attr, None)
-        if tp:
-            try:
-                return int(time.mktime(tp))
-            except Exception:
-                pass
+    tp = getattr(entry, "published_parsed", None)
+    if tp:
+        try:
+            return int(time.mktime(tp))
+        except:
+            pass
     return 0
-
-# ==============================
-# MESSAGE BUILDERS
-# ==============================
-def build_hype_alert(items):
-    # pega só os que bateram threshold
-    alert_items = [it for it in items if it["score"] >= HYPE_ALERT_THRESHOLD]
-    if not alert_items:
-        return None
-
-    alert_items.sort(key=lambda x: (-x["score"], -x["ts"]))
-    lines = ["<b>🚨 ALERTA DE HYPE</b>\n"]
-    for it in alert_items[:6]:
-        titulo_pt = traduzir_ptbr(it["title"])
-        lines.append(f"• {titulo_pt}\n{it['link']}\n")
-    return "\n".join(lines).strip()
-
-def build_daily_message(grouped, top3, top3_links):
-    order = ["🎮 Games", "🤖 IA", "🖥 Hardware", "🔐 Segurança", "📱 Mobile", "🧠 Tech Geral"]
-
-    msg = ["<b>📰 Tech + Games do Dia (PT-BR)</b>\n"]
-
-    # TOP 3
-    msg.append("<b>🔥 TOP 3 DO DIA</b>")
-    for i, it in enumerate(top3, start=1):
-        titulo_pt = traduzir_ptbr(it["title"])
-        # Se quiser, dá pra mostrar score: f"(Hype {it['score']})"
-        msg.append(f"{i}) {titulo_pt}\n{it['link']}\n")
-    msg.append("")
-
-    # Categorias (evita duplicar o top3)
-    for cat in order:
-        items = grouped.get(cat, [])
-        # remove top3
-        items = [it for it in items if it["link"] not in top3_links]
-        if not items:
-            continue
-
-        msg.append(f"<b>{cat}</b>")
-        for it in items[:5]:
-            titulo_pt = traduzir_ptbr(it["title"])
-            msg.append(f"• {titulo_pt}\n{it['link']}\n")
-        msg.append("")
-
-    return "\n".join(msg).strip()
 
 # ==============================
 # MAIN
@@ -226,34 +160,65 @@ def main():
         for entry in feed.entries[:10]:
             title = getattr(entry, "title", "").strip()
             link = getattr(entry, "link", "").strip()
+
             if not title or not link:
                 continue
 
-            cat = categorize(title, source_name)
             score = hype_score(title)
             ts = entry_timestamp(entry)
+            category = categorize(title, source_name)
 
-            item = {"title": title, "link": link, "score": score, "ts": ts, "source": source_name}
-            grouped[cat].append(item)
+            item = {
+                "title": title,
+                "link": link,
+                "score": score,
+                "ts": ts
+            }
+
+            grouped[category].append(item)
             all_items.append(item)
 
     if not all_items:
         send_message("Hoje não consegui puxar notícias.")
         return
 
-    # TOP 3 = maior hype score; desempate por mais recente
+    # Ordena por hype + data
     all_items_sorted = sorted(all_items, key=lambda x: (-x["score"], -x["ts"]))
+
     top3 = all_items_sorted[:3]
     top3_links = {it["link"] for it in top3}
 
-    # 1) ALERTA DE HYPE (se existir)
-    alert_msg = build_hype_alert(all_items)
-    if alert_msg:
+    # ALERTA DE HYPE
+    hype_items = [it for it in all_items if it["score"] >= HYPE_ALERT_THRESHOLD]
+    if hype_items:
+        hype_items = sorted(hype_items, key=lambda x: (-x["score"], -x["ts"]))
+        alert_msg = "<b>🚨 ALERTA DE HYPE</b>\n\n"
+        for it in hype_items[:6]:
+            titulo_pt = traduzir_ptbr(it["title"])
+            alert_msg += f"• {titulo_pt}\n{it['link']}\n\n"
         send_message(alert_msg)
 
-    # 2) RESUMO DO DIA
-    daily_msg = build_daily_message(grouped, top3, top3_links)
-    send_message(daily_msg)
+    # MENSAGEM PRINCIPAL
+    message = "<b>📰 Tech + Games do Dia (PT-BR)</b>\n\n"
+
+    message += "<b>🔥 TOP 3 DO DIA</b>\n"
+    for i, it in enumerate(top3, start=1):
+        titulo_pt = traduzir_ptbr(it["title"])
+        message += f"{i}) {titulo_pt}\n{it['link']}\n\n"
+
+    order = ["🎮 Games", "🤖 IA", "🖥 Hardware", "🔐 Segurança", "📱 Mobile", "🧠 Tech Geral"]
+
+    for category in order:
+        items = [it for it in grouped.get(category, []) if it["link"] not in top3_links]
+        if not items:
+            continue
+
+        message += f"<b>{category}</b>\n"
+        for it in items[:5]:
+            titulo_pt = traduzir_ptbr(it["title"])
+            message += f"• {titulo_pt}\n{it['link']}\n\n"
+
+    send_message(message)
 
 if __name__ == "__main__":
     main()
